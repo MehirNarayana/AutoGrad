@@ -80,6 +80,12 @@ int main(){
             //std::cout<< "param gradients: " << p->gradient<<endl;
 
         }
+
+        double clip_value = 10.0;
+        for (auto& p: parameters) {
+            if (p->gradient > clip_value) p->gradient = clip_value;
+            if (p->gradient < -clip_value) p->gradient = -clip_value;
+        }
         
         for (auto& p: parameters){
 
@@ -92,11 +98,7 @@ int main(){
         }
 
         
-        double clip_value = 10.0;
-        for (auto& p: parameters) {
-            if (p->gradient > clip_value) p->gradient = clip_value;
-            if (p->gradient < -clip_value) p->gradient = -clip_value;
-        }
+        
 
         std::cout<< "param ex: " << parameters[0]->data<<endl;
 
