@@ -3,6 +3,10 @@ project(AutoGrad)
 
 
 find_package(Eigen3 REQUIRED)
+find_package(Python 3.11 COMPONENTS Interpreter Development.Module REQUIRED)
+
+
+
 file(GLOB SOURCE_FILES ./*.cpp)
 
 add_library(${PROJECT_NAME} SHARED ${SOURCE_FILES})

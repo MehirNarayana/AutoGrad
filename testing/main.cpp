@@ -7,6 +7,7 @@
 
 #include "NeuralNet.hpp"
 
+
 using namespace std;
 
 int main(){

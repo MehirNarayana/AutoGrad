@@ -52,6 +52,8 @@ std::vector<std::shared_ptr<Value>> Layer::forward(std::vector<std::shared_ptr<V
     }
     return outputValues;
 }
+
+
 std::vector<std::shared_ptr<Value>> Layer::parameters(){
     
     std::vector<std::shared_ptr<Value>> layerParams;
