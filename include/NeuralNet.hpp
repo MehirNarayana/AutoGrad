@@ -7,10 +7,8 @@
 class Neuron{
     public:
         Neuron(int inputShape);
-        
         std::vector<std::shared_ptr<Value>> weights;
         std::vector<std::shared_ptr<Value>> biases;
-        
         std::shared_ptr<Value> forward(std::vector<std::shared_ptr<Value>> &inputValues);
         std::vector<std::shared_ptr<Value>> parameters();
 
@@ -26,11 +24,10 @@ class Layer{
         Layer(int inputShape, int outputShape);
         int inputShape;
         int outputShape;
-        std::vector<Neuron> outputNeurons; 
-        std::vector<std::shared_ptr<Value>> outputValues; 
+        std::vector<Neuron> outputNeurons;
+        std::vector<std::shared_ptr<Value>> outputValues;
         std::vector<std::shared_ptr<Value>> forward(std::vector<std::shared_ptr<Value>> &inputValues);
         std::vector<std::shared_ptr<Value>> parameters();
-        
 
 };
 
@@ -40,7 +37,6 @@ class Mlp{
         Mlp(int inputShape, std::vector<int> layerShapes);
         int inputShape;
         size_t numLayers;
-        
         std::vector<Layer> layers;
         std::shared_ptr<Value> forward(std::vector<double> inputValues);
         std::vector<std::shared_ptr<Value>> parameters();

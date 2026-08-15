@@ -4,7 +4,7 @@
 
 
 Value::Value(double data, std::set<std::shared_ptr<Value>> children, Op op):data(data), prev(children), op(op){
-    
+
 }
 
 std::shared_ptr<Value> Value::operator+(const std::shared_ptr<Value>& other){
@@ -18,9 +18,6 @@ std::shared_ptr<Value> Value::operator+(const std::shared_ptr<Value>& other){
     out->backward = currBackward;
     return out;
 
-
-
-    
 }
 
 
@@ -35,10 +32,6 @@ std::shared_ptr<Value> Value::operator+(double other){
 
     out->backward = currBackward;
     return out;
-
-
-
-    
 }
 
 std::shared_ptr<Value> Value::operator-(const std::shared_ptr<Value>& other){
@@ -59,7 +52,7 @@ std::shared_ptr<Value> Value::operator*(const std::shared_ptr<Value>& other){
     std::shared_ptr<Value> out = std::make_shared<Value>(this->data * other->getData(), std::set<std::shared_ptr<Value>>{shared_from_this(), other}, Op::Mul);
     auto currBackward = [=](){
         shared_from_this()->gradient += other->data * out->gradient ;
-        other->gradient += other->data * out->gradient;
+        other->gradient += shared_from_this()->data * out->gradient;
 
     };
 
@@ -74,22 +67,18 @@ std::shared_ptr<Value> Value::operator*(double other){
     std::shared_ptr<Value> out = std::make_shared<Value>(this->data * num->getData(), std::set<std::shared_ptr<Value>>{shared_from_this(), num}, Op::Mul);
     auto currBackward = [=](){
         shared_from_this()->gradient += num->data * out->gradient ;
-        num->gradient += num->data * out->gradient;
+        num->gradient += shared_from_this()->data * out->gradient;
 
     };
 
     out->backward = currBackward;
     return out;
 
-
-
-    
 }
 
 std::shared_ptr<Value> Value::operator^(double exponent){
-    
+
     std::shared_ptr<Value> out = std::make_shared<Value>(std::pow(this->data, exponent), std::set<std::shared_ptr<Value>>{shared_from_this()}, Op::Pow);
-    
     auto currBackward = [=](){
         shared_from_this()->gradient += exponent * std::pow(this->data, exponent - 1) * out->gradient ;
     };
@@ -114,18 +103,18 @@ std::shared_ptr<Value> Value::tanh(){
     double x = data;
     double t = std::tanh(x);
     std::shared_ptr<Value> out = std::make_shared<Value>(t, std::set<std::shared_ptr<Value>>{shared_from_this()});
-    
+
     auto currBackward = [=](){
         shared_from_this()->gradient += (1 - std::pow(t, 2)) * out->gradient ;
-        
+
 
     };
 
     out->backward = currBackward;
-    
+
     out->label = "tanh";
     return out;
-    
+
 }
 
 
@@ -138,21 +127,20 @@ void Value::topoSort(std::shared_ptr<Value> root){
         }
         topo.push_back(root);
     }
-    
+
 }
 
 
 void Value::applyBackWard(){
-    visited.clear(); 
+    visited.clear();
     topo.clear();
     topoSort(shared_from_this());
     gradient = 1;
     for (int i = topo.size() - 1; i >= 0; --i) {
         topo[i]->backward();
-    
-    }
 
-}        
+    }
+}
 
 
 

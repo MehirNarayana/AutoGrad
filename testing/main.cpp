@@ -17,11 +17,10 @@ int main(){
     //a->label = "a";
     //std::shared_ptr<Value> b = std::make_shared<Value>(-3.0);   
     //b->label = "b";
-    
-    
+
     //std::shared_ptr<Value> e = (*a) * b;
     //e->gradient = 1;
-    
+
     
     
     

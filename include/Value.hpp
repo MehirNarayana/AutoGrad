@@ -16,10 +16,7 @@ enum class Op {
 
 class Value: public std::enable_shared_from_this<Value>{
     public:
-        
         Value(double data, std::set<std::shared_ptr<Value>> children = {}, Op op = Op::None);
-        
-        
         double getData() const;
         std::shared_ptr<Value> operator+(const std::shared_ptr<Value>& other);
         std::shared_ptr<Value> operator*(const std::shared_ptr<Value>& other);
@@ -30,7 +27,7 @@ class Value: public std::enable_shared_from_this<Value>{
         std::shared_ptr<Value> operator-(double other);
         void topoSort(std::shared_ptr<Value> root);
         void applyBackWard();
-        
+
         Op op;
 
         std::vector<std::shared_ptr<Value>> topo;
@@ -42,13 +39,13 @@ class Value: public std::enable_shared_from_this<Value>{
         double  gradient = 0.0;
         std::function<void()> backward = [](){};
         std::shared_ptr<Value> tanh();
-        
 
 
 
 
-    
-        
+
+
+
 
 
 };
