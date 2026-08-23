@@ -40,3 +40,9 @@ void TensorBase::swapShape(size_t dim1, size_t dim2){
     }
 }
 
+int TensorBase::getNumTotalElements(){
+    return stride[0];
+}
+
+
+

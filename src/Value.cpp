@@ -46,16 +46,13 @@ std::shared_ptr<Value> Value::operator-(double other){
 }
 
 
-
-
 std::shared_ptr<Value> Value::operator*(const std::shared_ptr<Value>& other){
     std::shared_ptr<Value> out = std::make_shared<Value>(this->data * other->getData(), std::set<std::shared_ptr<Value>>{shared_from_this(), other}, Op::Mul);
     auto currBackward = [=](){
-        shared_from_this()->gradient += other->data * out->gradient ;
+        shared_from_this()->gradient += other->data * out->gradient;
         other->gradient += shared_from_this()->data * out->gradient;
 
     };
-
     out->backward = currBackward;
     return out;
 }
