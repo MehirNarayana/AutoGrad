@@ -1,5 +1,5 @@
 
 build/
 .vscode/
-./clang-format
+.clang-format
 # so code doesn't look bad :)
