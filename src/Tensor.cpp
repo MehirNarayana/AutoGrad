@@ -2,47 +2,46 @@
 #include <stdexcept>
 #include <utility>
 
-TensorBase::TensorBase(){};
-TensorBase::TensorBase(std::vector<size_t> dataShape): dim(dataShape.size()), dataShape(std::move(dataShape)), stride(dim){};
+TensorBaseImpl::TensorBaseImpl() {};
+TensorBaseImpl::TensorBaseImpl(std::vector<size_t> dataShape)
+    : dim(dataShape.size()), dataShape(std::move(dataShape)), stride(dim) {};
 
-void TensorBase::fillStride(size_t lastIndex){
+void TensorBaseImpl::fillStride(size_t lastIndex) {
     int accum = 1;
-    for (int i = lastIndex; i>=0; i--){
+    for (int i = lastIndex; i >= 0; i--) {
         stride[i] = accum;
         accum = dataShape[i] * accum;
     }
 }
 
-
-size_t TensorBase::getDim(){
+size_t TensorBaseImpl::getDim() const noexcept {
     return dim;
 }
 
-std::vector<size_t> TensorBase::getShape(){
+const std::vector<size_t>& TensorBaseImpl::getShape() const noexcept {
     return dataShape;
 }
 
-void TensorBase::swapStride(size_t dim1, size_t dim2){
-    try{
+const std::vector<size_t>& TensorBaseImpl::getStride() const noexcept {
+    return stride;
+}
+
+void TensorBaseImpl::swapStride(size_t dim1, size_t dim2) {
+    try {
         std::swap(stride[dim1], stride[dim2]);
-    }
-    catch (...){
+    } catch (...) {
         throw std::runtime_error{"error"};
     }
 }
 
-void TensorBase::swapShape(size_t dim1, size_t dim2){
-    try{
+void TensorBaseImpl::swapShape(size_t dim1, size_t dim2) {
+    try {
         std::swap(dataShape[dim1], dataShape[dim2]);
-    }
-    catch (...){
+    } catch (...) {
         throw std::runtime_error{"error"};
     }
 }
 
-int TensorBase::getNumTotalElements(){
+int TensorBaseImpl::getNumTotalElements() const {
     return stride[0];
 }
-
-
-
