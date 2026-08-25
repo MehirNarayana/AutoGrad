@@ -45,3 +45,24 @@ void TensorBaseImpl::swapShape(size_t dim1, size_t dim2) {
 int TensorBaseImpl::getNumTotalElements() const {
     return stride[0];
 }
+
+void TensorBaseImpl::topoSort(TensorBaseImpl* root,
+                              std::unordered_set<TensorBaseImpl*>& visited,
+                              std::vector<TensorBaseImpl*>& topoList) {
+    if (visited.find(root) == visited.end()) {
+        visited.insert(root);
+        for (const auto& parent : root->parents) {
+            topoSort(parent.get(), visited, topoList);
+        }
+        topoList.push_back(root);
+    }
+}
+
+void TensorBaseImpl::applyBackward() {
+    std::unordered_set<TensorBaseImpl*> visited;
+    std::vector<TensorBaseImpl*> topoList;
+    TensorBaseImpl::topoSort(this, visited, topoList);
+    for (int i = topoList.size() - 1; i >= 0; --i) {
+        topoList[i]->backward();
+    }
+}

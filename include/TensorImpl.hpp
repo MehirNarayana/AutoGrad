@@ -6,12 +6,19 @@
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 template <typename scalarType> class TensorImpl;
 
 class TensorBaseImpl {
+private:
+    static void topoSort(TensorBaseImpl* root,
+                         std::unordered_set<TensorBaseImpl*>& visited,
+                         std::vector<TensorBaseImpl*>& topoList);
+    void applyBackward();
+
 protected:
     size_t dim = 0;
     std::vector<size_t> dataShape;
@@ -21,6 +28,13 @@ protected:
 
     void swapStride(size_t dim1, size_t dim2);
     void swapShape(size_t dim1, size_t dim2);
+
+    std::function<void()> backward;
+
+    std::vector<std::shared_ptr<TensorBaseImpl>> parents;
+    std::unordered_set<std::shared_ptr<TensorBaseImpl>> visited;
+    std::vector<std::shared_ptr<TensorBaseImpl>> topoList;
+
     TensorBaseImpl();
     TensorBaseImpl(std::vector<size_t> dataShape);
 
@@ -29,7 +43,6 @@ public:
     size_t getDim() const noexcept;
     const std::vector<size_t>& getShape() const noexcept;
     const std::vector<size_t>& getStride() const noexcept;
-    std::function<void()> backward;
     int getNumTotalElements() const;
 };
 
@@ -40,7 +53,6 @@ private:
     template <typename> friend class TensorImpl;
 
     std::vector<scalarType> data;
-    std::vector<std::shared_ptr<TensorBaseImpl>> parents;
 
     const static int tileM = 32;
     const static int tileN = 32;
@@ -244,8 +256,8 @@ private:
         }
 
         bool outputTracksGradient = trackGradient || other->trackGradient;
-        std::shared_ptr<TensorImpl<resultType>> output(new TensorImpl<resultType>(
-            std::move(result), std::move(newShape), outputTracksGradient));
+        std::shared_ptr<TensorImpl<resultType>> output = std::make_shared<TensorImpl<resultType>>(
+            std::move(result), std::move(newShape), outputTracksGradient);
         if (outputTracksGradient) {
             output->parents = {this->shared_from_this(), other};
         }
@@ -406,6 +418,36 @@ private:
         return output;
     }
 
+    std::shared_ptr<TensorImpl<scalarType>> tanh() {
+        std::vector<scalarType> outputData(getNumTotalElements());
+        for (int i = 0; i < getNumTotalElements(); i++) {
+            outputData[i] = std::tanh(data[i]);
+        }
+        std::vector<size_t> outputShape = this->dataShape;
+        std::shared_ptr<TensorImpl<scalarType>> output = std::make_shared<TensorImpl<scalarType>>(
+            std::move(outputData), std::move(dataShape), true);
+
+        output->parents = {this->shared_from_this()};
+
+        std::weak_ptr<TensorImpl<scalarType>> currWeak{this->shared_from_this()};
+        std::weak_ptr<TensorImpl<scalarType>> outputWeak{output};
+
+        output->backward = [currWeak, outputWeak]() {
+            std::shared_ptr<TensorImpl<scalarType>> output = outputWeak.lock();
+            std::shared_ptr<TensorImpl<scalarType>> curr = currWeak.lock();
+            if (!output || !curr) {
+                return;
+            }
+            std::vector<scalarType>& outputGradientVector = output->gradient->getData();
+            std::vector<scalarType>& currentGradientVector = curr->ensureGradient().getData();
+            for (int i = 0; i < curr->getNumTotalElements(); i++) {
+                currentGradientVector[i] +=
+                    (1 - std::pow(output->data[i], 2)) * outputGradientVector[i];
+            }
+        };
+        return output;
+    }
+
 public:
     TensorImpl(std::vector<scalarType> inputVector,
                std::vector<size_t> inputDimShape,
@@ -418,11 +460,9 @@ public:
     std::unique_ptr<TensorImpl<scalarType>> gradient;
 
     TensorImpl(const TensorImpl& other)
-        : TensorBaseImpl(other), data(other.data), parents(other.parents),
-          trackGradient(other.trackGradient) {
+        : TensorBaseImpl(other), data(other.data), trackGradient(other.trackGradient) {
         if (other.gradient) {
-            gradient = std::unique_ptr<TensorImpl<scalarType>>(
-                new TensorImpl<scalarType>(*other.gradient));
+            gradient = std::make_unique<TensorImpl<scalarType>>(*other.gradient);
         }
     }
 
@@ -433,12 +473,10 @@ public:
 
         TensorBaseImpl::operator=(other);
         data = other.data;
-        parents = other.parents;
         trackGradient = other.trackGradient;
 
         if (other.gradient) {
-            gradient = std::unique_ptr<TensorImpl<scalarType>>(
-                new TensorImpl<scalarType>(*other.gradient));
+            gradient = std::make_unique<TensorImpl<scalarType>>(*other.gradient);
         } else {
             gradient.reset();
         }
@@ -449,8 +487,7 @@ public:
     TensorImpl<scalarType>& ensureGradient() {
         if (!gradient) {
             std::vector<scalarType> zeros(data.size(), scalarType{});
-            gradient = std::unique_ptr<TensorImpl<scalarType>>(
-                new TensorImpl<scalarType>(std::move(zeros), dataShape, false));
+            gradient = std::make_unique<TensorImpl<scalarType>>(std::move(zeros), dataShape, false);
         }
 
         return *gradient;
@@ -471,12 +508,44 @@ public:
             throw std::runtime_error{"dimension must be greater than 0"};
         }
     }
-    TensorImpl transpose(size_t dim1, size_t dim2) {
-        TensorImpl<scalarType> output = *this;
+    std::shared_ptr<TensorImpl<scalarType>> transpose(size_t dim1, size_t dim2) {
+        if (dim1 >= dim || dim2 >= dim) {
+            throw std::out_of_range{"Transpose dimension is out of range"};
+        }
+
+        std::shared_ptr<TensorImpl<scalarType>> curr = this->shared_from_this();
+        std::shared_ptr<TensorImpl<scalarType>> output =
+            std::make_shared<TensorImpl<scalarType>>(data, dataShape, trackGradient);
+
         // tranposing is equivalent to just switching the coordinates of every element in the matrix
-        // so to we just need to swap the stride
-        output.swapStride(dim1, dim2);
-        output.swapShape(dim1, dim2);
+        // so to we just need to swap the stride    output->stride = stride;
+        output->swapStride(dim1, dim2);
+        output->swapShape(dim1, dim2);
+
+        if (!trackGradient) {
+            return output;
+        }
+
+        output->parents = {curr};
+        std::weak_ptr<TensorImpl<scalarType>> currWeak{curr};
+        std::weak_ptr<TensorImpl<scalarType>> outputWeak{output};
+
+        output->backward = [currWeak, outputWeak]() {
+            std::shared_ptr<TensorImpl<scalarType>> curr = currWeak.lock();
+            std::shared_ptr<TensorImpl<scalarType>> output = outputWeak.lock();
+
+            if (!curr || !output || !curr->trackGradient) {
+                return;
+            }
+
+            std::vector<scalarType>& currGradientVector = curr->ensureGradient().getData();
+            std::vector<scalarType>& outputGradientVector = output->ensureGradient().getData();
+
+            for (size_t index = 0; index < outputGradientVector.size(); ++index) {
+                currGradientVector[index] += outputGradientVector[index];
+            }
+        };
+
         return output;
     }
 
@@ -571,8 +640,8 @@ public:
         }
 
         bool outputTracksGradient = trackGradient || other->trackGradient;
-        std::shared_ptr<TensorImpl<resultType>> output(new TensorImpl<resultType>(
-            std::move(result), std::move(newShape), outputTracksGradient));
+        std::shared_ptr<TensorImpl<resultType>> output = std::make_shared<TensorImpl<resultType>>(
+            std::move(result), std::move(newShape), outputTracksGradient);
 
         if (outputTracksGradient) {
             output->parents = {this->shared_from_this(), other};
@@ -650,8 +719,8 @@ public:
                 static_cast<resultType>(data[currCoordinate]) + static_cast<resultType>(other);
         }
 
-        std::shared_ptr<TensorImpl<resultType>> output(
-            new TensorImpl<resultType>(std::move(result), dataShape, trackGradient));
+        std::shared_ptr<TensorImpl<resultType>> output =
+            std::make_shared<TensorImpl<resultType>>(std::move(result), dataShape, trackGradient);
 
         if (trackGradient) {
             output->parents = {this->shared_from_this()};
@@ -714,8 +783,8 @@ public:
             result[outputIndex] = static_cast<resultType>(data[currCoordinate]) * scalar;
         }
 
-        std::shared_ptr<TensorImpl<resultType>> output(
-            new TensorImpl<resultType>(std::move(result), dataShape, trackGradient));
+        std::shared_ptr<TensorImpl<resultType>> output =
+            std::make_shared<TensorImpl<resultType>>(std::move(result), dataShape, trackGradient);
 
         if (trackGradient) {
             output->parents = {this->shared_from_this()};

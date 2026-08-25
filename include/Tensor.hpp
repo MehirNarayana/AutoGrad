@@ -13,6 +13,12 @@ public:
     Tensor(const inputType& data, bool shouldTrackGradient = true)
         : impl(std::make_shared<TensorImpl<scalarType>>(data, shouldTrackGradient)) {}
 
+    Tensor(std::vector<scalarType> inputVector,
+           std::vector<size_t> inputShape,
+           bool shouldTrackGradient = true)
+        : impl(std::make_shared<TensorImpl<scalarType>>(
+              std::move(inputVector), std::move(inputShape), shouldTrackGradient)) {}
+
     size_t getDim() const noexcept {
         return impl->getDim();
     }
@@ -25,13 +31,16 @@ public:
         return impl->getStride();
     }
 
+    int getNumTotalElements() {
+        return impl->getNumTotalElements();
+    }
+
     scalarType operator[](size_t index) const {
         return (*impl)[index];
     }
 
     Tensor<scalarType> transpose(size_t dim1, size_t dim2) {
-        return Tensor<scalarType>(
-            std::make_shared<TensorImpl<scalarType>>(impl->transpose(dim1, dim2)));
+        return Tensor<scalarType>(impl->transpose(dim1, dim2));
     }
 
     template <typename otherScalarType>
@@ -60,5 +69,9 @@ public:
     Tensor<std::common_type_t<scalarType, otherScalarType>> operator*(otherScalarType other) {
         using resultType = std::common_type_t<scalarType, otherScalarType>;
         return Tensor<resultType>((*impl) * other);
+    }
+
+    Tensor<scalarType> tanh() {
+        return Tensor<scalarType>(impl->tanh());
     }
 };
