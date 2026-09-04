@@ -9,4 +9,4 @@ project(AutoGrad LANGUAGES CXX)
 add_subdirectory(src)
 
 # Add the tests directory
-add_subdirectory(testing)
+add_subdirectory(Examples/MNIST)

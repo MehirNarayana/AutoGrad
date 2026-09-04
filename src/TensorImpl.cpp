@@ -7,8 +7,9 @@ TensorBaseImpl::TensorBaseImpl(std::vector<size_t> dataShape)
     : dim(dataShape.size()), dataShape(std::move(dataShape)), stride(dim) {};
 
 void TensorBaseImpl::fillStride(size_t lastIndex) {
-    int accum = 1;
-    for (int i = lastIndex; i >= 0; i--) {
+    size_t accum = 1;
+    for (size_t reverseIndex = lastIndex + 1; reverseIndex > 0; --reverseIndex) {
+        const size_t i = reverseIndex - 1;
         stride[i] = accum;
         accum = dataShape[i] * accum;
     }
@@ -42,8 +43,8 @@ void TensorBaseImpl::swapShape(size_t dim1, size_t dim2) {
     }
 }
 
-int TensorBaseImpl::getNumTotalElements() const {
-    return stride[0];
+size_t TensorBaseImpl::getNumTotalElements() const noexcept {
+    return numTotalElements;
 }
 
 void TensorBaseImpl::topoSort(TensorBaseImpl* root,
@@ -62,7 +63,10 @@ void TensorBaseImpl::applyBackward() {
     std::unordered_set<TensorBaseImpl*> visited;
     std::vector<TensorBaseImpl*> topoList;
     TensorBaseImpl::topoSort(this, visited, topoList);
-    for (int i = topoList.size() - 1; i >= 0; --i) {
-        topoList[i]->backward();
+    for (size_t reverseIndex = topoList.size(); reverseIndex > 0; --reverseIndex) {
+        const size_t i = reverseIndex - 1;
+        if (topoList[i]->backward) {
+            topoList[i]->backward();
+        }
     }
 }

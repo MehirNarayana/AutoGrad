@@ -1,7 +1,11 @@
+#pragma once
+
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -10,19 +14,20 @@
 #include <utility>
 #include <vector>
 
-template <typename scalarType> class TensorImpl;
+template <typename scalarType>
+class TensorImpl;
 
 class TensorBaseImpl {
 private:
     static void topoSort(TensorBaseImpl* root,
                          std::unordered_set<TensorBaseImpl*>& visited,
                          std::vector<TensorBaseImpl*>& topoList);
-    void applyBackward();
 
 protected:
     size_t dim = 0;
     std::vector<size_t> dataShape;
     std::vector<size_t> stride;
+    size_t numTotalElements = 0;
 
     void fillStride(size_t lastIndex);
 
@@ -34,6 +39,7 @@ protected:
     std::vector<std::shared_ptr<TensorBaseImpl>> parents;
     std::unordered_set<std::shared_ptr<TensorBaseImpl>> visited;
     std::vector<std::shared_ptr<TensorBaseImpl>> topoList;
+    void applyBackward();
 
     TensorBaseImpl();
     TensorBaseImpl(std::vector<size_t> dataShape);
@@ -43,26 +49,28 @@ public:
     size_t getDim() const noexcept;
     const std::vector<size_t>& getShape() const noexcept;
     const std::vector<size_t>& getStride() const noexcept;
-    int getNumTotalElements() const;
+    size_t getNumTotalElements() const noexcept;
 };
 
 template <typename scalarType = float>
 class TensorImpl : public TensorBaseImpl,
                    public std::enable_shared_from_this<TensorImpl<scalarType>> {
 private:
-    template <typename> friend class TensorImpl;
+    template <typename>
+    friend class TensorImpl;
 
     std::vector<scalarType> data;
 
-    const static int tileM = 32;
-    const static int tileN = 32;
-    const static int tileK = 32;
+    static constexpr size_t tileM = 32;
+    static constexpr size_t tileN = 32;
+    static constexpr size_t tileK = 32;
 
     std::vector<scalarType>& getData() {
         return data;
     }
 
-    template <typename inputType> struct isVector : std::false_type {};
+    template <typename inputType>
+    struct isVector : std::false_type {};
 
     template <typename inputType, typename Alloc>
     struct isVector<std::vector<inputType, Alloc>> : std::true_type {};
@@ -71,11 +79,13 @@ private:
         return true;
     }
 
-    template <typename randomType> bool isScalarType(randomType x) {
+    template <typename randomType>
+    bool isScalarType(randomType x) {
         return false;
     }
 
-    template <typename inputType> size_t findShapeAndFlatten(const inputType& data, int currDepth) {
+    template <typename inputType>
+    size_t findShapeAndFlatten(const inputType& data, size_t currDepth) {
         if constexpr (!isVector<inputType>::value) {
             if (isScalarType(data)) {
                 this->data.push_back(data);
@@ -111,11 +121,11 @@ private:
                    std::vector<size_t>& newShape,
                    std::vector<size_t>& effectiveStrideCurr,
                    std::vector<size_t>& effectiveStrideOther,
-                   int& batchDim,
-                   int& totalElements,
-                   int ignoredDimensions) {
-        int otherDim = static_cast<int>(other.getDim());
-        int currDim = static_cast<int>(dim);
+                   size_t& batchDim,
+                   size_t& totalElements,
+                   size_t ignoredDimensions) {
+        const size_t otherDim = other.getDim();
+        const size_t currDim = dim;
 
         if (otherDim < ignoredDimensions || currDim < ignoredDimensions) {
             throw std::runtime_error{"Not enough dimensions to broadcast"};
@@ -129,52 +139,55 @@ private:
 
         std::vector<size_t> otherShape = other.getShape();
         const std::vector<size_t>& otherStride = other.getStride();
-        int currDimIndex = currDim - ignoredDimensions - 1;
-        int otherDimIndex = otherDim - ignoredDimensions - 1;
-        int k = batchDim - 1;
+        const size_t currBatchDim = currDim - ignoredDimensions;
+        const size_t otherBatchDim = otherDim - ignoredDimensions;
 
-        while (currDimIndex >= 0 && otherDimIndex >= 0) {
-            size_t a = dataShape[currDimIndex];
-            size_t b = otherShape[otherDimIndex];
+        const size_t commonBatchDim = std::min(currBatchDim, otherBatchDim);
 
-            if (a == b) {
-                newShape[k] = a;
-                effectiveStrideCurr[k] = stride[currDimIndex];
-                effectiveStrideOther[k] = otherStride[otherDimIndex];
-            } else if (a == 1) {
-                newShape[k] = b;
-                effectiveStrideCurr[k] = 0;
-                effectiveStrideOther[k] = otherStride[otherDimIndex];
-            } else if (b == 1) {
-                newShape[k] = a;
-                effectiveStrideCurr[k] = stride[currDimIndex];
-                effectiveStrideOther[k] = 0;
+        for (size_t offset = 0; offset < commonBatchDim; ++offset) {
+            const size_t outputIndex = batchDim - 1 - offset;
+            const size_t currIndex = currBatchDim - 1 - offset;
+            const size_t otherIndex = otherBatchDim - 1 - offset;
+            const size_t currSize = dataShape[currIndex];
+            const size_t otherSize = otherShape[otherIndex];
+
+            if (currSize == otherSize) {
+                newShape[outputIndex] = currSize;
+                effectiveStrideCurr[outputIndex] = stride[currIndex];
+                effectiveStrideOther[outputIndex] = otherStride[otherIndex];
+            } else if (currSize == 1) {
+                newShape[outputIndex] = otherSize;
+                effectiveStrideCurr[outputIndex] = 0;
+                effectiveStrideOther[outputIndex] = otherStride[otherIndex];
+            } else if (otherSize == 1) {
+                newShape[outputIndex] = currSize;
+                effectiveStrideCurr[outputIndex] = stride[currIndex];
+                effectiveStrideOther[outputIndex] = 0;
             } else {
                 throw std::runtime_error("Tensors cannot be broadcast together");
             }
 
-            totalElements *= newShape[k];
-            --k;
-            --currDimIndex;
-            --otherDimIndex;
+            totalElements *= newShape[outputIndex];
         }
 
-        while (currDimIndex >= 0) {
-            newShape[k] = dataShape[currDimIndex];
-            effectiveStrideCurr[k] = stride[currDimIndex];
-            effectiveStrideOther[k] = 0;
-            totalElements *= newShape[k];
-            --k;
-            --currDimIndex;
+        for (size_t offset = commonBatchDim; offset < currBatchDim; ++offset) {
+            const size_t outputIndex = batchDim - 1 - offset;
+            const size_t currIndex = currBatchDim - 1 - offset;
+
+            newShape[outputIndex] = dataShape[currIndex];
+            effectiveStrideCurr[outputIndex] = stride[currIndex];
+            effectiveStrideOther[outputIndex] = 0;
+            totalElements *= newShape[outputIndex];
         }
 
-        while (otherDimIndex >= 0) {
-            newShape[k] = otherShape[otherDimIndex];
-            effectiveStrideCurr[k] = 0;
-            effectiveStrideOther[k] = otherStride[otherDimIndex];
-            totalElements *= newShape[k];
-            --k;
-            --otherDimIndex;
+        for (size_t offset = commonBatchDim; offset < otherBatchDim; ++offset) {
+            const size_t outputIndex = batchDim - 1 - offset;
+            const size_t otherIndex = otherBatchDim - 1 - offset;
+
+            newShape[outputIndex] = otherShape[otherIndex];
+            effectiveStrideCurr[outputIndex] = 0;
+            effectiveStrideOther[outputIndex] = otherStride[otherIndex];
+            totalElements *= newShape[outputIndex];
         }
     }
 
@@ -184,13 +197,13 @@ private:
                 std::vector<size_t> newShape,
                 const std::vector<size_t>& effectiveStrideCurr,
                 const std::vector<size_t>& effectiveStrideOther,
-                int totalElements,
-                int mCurr,
-                int nCurr,
-                int nOther,
-                int batchDim) {
-        int elementsPerBatch = mCurr * nOther;
-        int totalBatches = totalElements / elementsPerBatch;
+                size_t totalElements,
+                size_t mCurr,
+                size_t nCurr,
+                size_t nOther,
+                size_t batchDim) {
+        const size_t elementsPerBatch = mCurr * nOther;
+        const size_t totalBatches = totalElements / elementsPerBatch;
 
         using resultType = std::common_type_t<scalarType, otherScalarType>;
 
@@ -198,47 +211,49 @@ private:
         size_t currRowStride = stride[dim - 2];
         size_t currColStride = stride[dim - 1];
 
-        int otherDim = static_cast<int>(other->getDim());
+        const size_t otherDim = other->getDim();
         const std::vector<size_t>& otherStride = other->getStride();
         size_t otherRowStride = otherStride[otherDim - 2];
         size_t otherColStride = otherStride[otherDim - 1];
 
-        for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-            int batchIndexCopy = batchIndex;
-            int currCoordinate = 0;
-            int otherCoordinate = 0;
-            for (int index = batchDim - 1; index >= 0; index--) {
-                int currDimStrideCoefficient = batchIndexCopy % newShape[index];
+        for (size_t batchIndex = 0; batchIndex < totalBatches; ++batchIndex) {
+            size_t batchIndexCopy = batchIndex;
+            size_t currCoordinate = 0;
+            size_t otherCoordinate = 0;
+            for (size_t reverseIndex = batchDim; reverseIndex > 0; --reverseIndex) {
+                const size_t index = reverseIndex - 1;
+                const size_t currDimStrideCoefficient = batchIndexCopy % newShape[index];
                 batchIndexCopy /= newShape[index];
                 currCoordinate += currDimStrideCoefficient * effectiveStrideCurr[index];
                 otherCoordinate += currDimStrideCoefficient * effectiveStrideOther[index];
             }
 
-            int batchStartIndex = batchIndex * elementsPerBatch;
-            int mNew = newShape[batchDim];
-            int nNew = newShape[batchDim + 1];
-            int kNew = nCurr;
-            for (int currVertical = 0; currVertical < mNew; currVertical += TensorImpl::tileM) {
-                for (int otherHorizontal = 0; otherHorizontal < nNew;
+            const size_t batchStartIndex = batchIndex * elementsPerBatch;
+            const size_t mNew = newShape[batchDim];
+            const size_t nNew = newShape[batchDim + 1];
+            const size_t kNew = nCurr;
+            for (size_t currVertical = 0; currVertical < mNew; currVertical += TensorImpl::tileM) {
+                for (size_t otherHorizontal = 0; otherHorizontal < nNew;
                      otherHorizontal += TensorImpl::tileN) {
-                    for (int k = 0; k < kNew; k += tileK) {
-                        int currHorizontal = k;
-                        int otherVertical = k;
-                        int endCurrHorizontal = std::min(k + tileK, kNew);
-                        int endCurrVertical = std::min(currVertical + TensorImpl::tileM, mNew);
-                        int endOtherHorizontal =
+                    for (size_t k = 0; k < kNew; k += tileK) {
+                        const size_t currHorizontal = k;
+                        const size_t otherVertical = k;
+                        const size_t endCurrHorizontal = std::min(k + tileK, kNew);
+                        const size_t endCurrVertical =
+                            std::min(currVertical + TensorImpl::tileM, mNew);
+                        const size_t endOtherHorizontal =
                             std::min(otherHorizontal + TensorImpl::tileN, nNew);
 
-                        for (int y = currVertical; y < endCurrVertical; y++) {
-                            for (int xOther = otherHorizontal; xOther < endOtherHorizontal;
-                                 xOther++) {
+                        for (size_t y = currVertical; y < endCurrVertical; ++y) {
+                            for (size_t xOther = otherHorizontal; xOther < endOtherHorizontal;
+                                 ++xOther) {
                                 resultType accum = 0;
-                                for (int index = 0; index < endCurrHorizontal - currHorizontal;
-                                     index++) {
-                                    int actualCurrCoordinate =
+                                for (size_t index = 0; index < endCurrHorizontal - currHorizontal;
+                                     ++index) {
+                                    const size_t actualCurrCoordinate =
                                         currCoordinate + y * currRowStride +
                                         (currHorizontal + index) * currColStride;
-                                    int actualOtherCoordinate =
+                                    const size_t actualOtherCoordinate =
                                         otherCoordinate + (otherVertical + index) * otherRowStride +
                                         xOther * otherColStride;
                                     resultType multipliedResult =
@@ -246,7 +261,7 @@ private:
                                         static_cast<resultType>((*other)[actualOtherCoordinate]);
                                     accum += multipliedResult;
                                 }
-                                int targetCoordinate = batchStartIndex + y * nNew + xOther;
+                                const size_t targetCoordinate = batchStartIndex + y * nNew + xOther;
                                 result[targetCoordinate] += accum;
                             }
                         }
@@ -284,7 +299,7 @@ private:
             std::vector<resultType>& outputGradientVector = output->gradient->getData();
             const std::vector<size_t>& outputShape = output->getShape();
             const std::vector<size_t>& outputStride = output->getStride();
-            int outputDim = static_cast<int>(output->getDim());
+            const size_t outputDim = output->getDim();
             size_t outputRowStride = outputStride[outputDim - 2];
             size_t outputColStride = outputStride[outputDim - 1];
 
@@ -293,54 +308,57 @@ private:
 
             const std::vector<size_t>& otherShape = other->getShape();
             const std::vector<size_t>& otherStride = other->getStride();
-            int otherDim = static_cast<int>(other->getDim());
+            const size_t otherDim = other->getDim();
             size_t otherRowStride = otherStride[otherDim - 2];
             size_t otherColStride = otherStride[otherDim - 1];
 
-            for (int batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-                int batchIndexCopy = batchIndex;
-                int currCoordinate = 0;
-                int otherCoordinate = 0;
+            for (size_t batchIndex = 0; batchIndex < totalBatches; ++batchIndex) {
+                size_t batchIndexCopy = batchIndex;
+                size_t currCoordinate = 0;
+                size_t otherCoordinate = 0;
 
-                for (int index = batchDim - 1; index >= 0; index--) {
-                    int currDimStrideCoefficient = batchIndexCopy % outputShape[index];
+                for (size_t reverseIndex = batchDim; reverseIndex > 0; --reverseIndex) {
+                    const size_t index = reverseIndex - 1;
+                    const size_t currDimStrideCoefficient = batchIndexCopy % outputShape[index];
                     batchIndexCopy /= outputShape[index];
                     currCoordinate += currDimStrideCoefficient * effectiveStrideCurr[index];
                     otherCoordinate += currDimStrideCoefficient * effectiveStrideOther[index];
                 }
 
-                int batchStartIndex = batchIndex * elementsPerBatch;
+                const size_t batchStartIndex = batchIndex * elementsPerBatch;
 
                 if (curr->trackGradient) {
                     std::vector<scalarType>& currGradientVector = curr->ensureGradient().getData();
-                    int mNew = curr->dataShape[curr->dim - 2];
-                    int nNew = curr->dataShape[curr->dim - 1];
-                    int kNew = otherShape[otherDim - 1]; // since we want the tranpose of other
+                    const size_t mNew = curr->dataShape[curr->dim - 2];
+                    const size_t nNew = curr->dataShape[curr->dim - 1];
+                    const size_t kNew =
+                        otherShape[otherDim - 1]; // since we want the tranpose of other
 
-                    for (int outputVertical = 0; outputVertical < mNew;
+                    for (size_t outputVertical = 0; outputVertical < mNew;
                          outputVertical += TensorImpl::tileM) {
-                        for (int otherHorizontal = 0; otherHorizontal < nNew;
+                        for (size_t otherHorizontal = 0; otherHorizontal < nNew;
                              otherHorizontal += TensorImpl::tileN) {
-                            for (int k = 0; k < kNew; k += tileK) {
-                                int outputHorizontal = k;
-                                int otherVertical = k;
-                                int endOutputHorizontal = std::min(k + tileK, kNew);
-                                int endOutputVertical =
+                            for (size_t k = 0; k < kNew; k += tileK) {
+                                const size_t outputHorizontal = k;
+                                const size_t otherVertical = k;
+                                const size_t endOutputHorizontal = std::min(k + tileK, kNew);
+                                const size_t endOutputVertical =
                                     std::min(outputVertical + TensorImpl::tileM, mNew);
-                                int endOtherHorizontal =
+                                const size_t endOtherHorizontal =
                                     std::min(otherHorizontal + TensorImpl::tileN, nNew);
 
-                                for (int y = outputVertical; y < endOutputVertical; y++) {
-                                    for (int xOther = otherHorizontal; xOther < endOtherHorizontal;
-                                         xOther++) {
+                                for (size_t y = outputVertical; y < endOutputVertical; ++y) {
+                                    for (size_t xOther = otherHorizontal;
+                                         xOther < endOtherHorizontal;
+                                         ++xOther) {
                                         resultType accum = 0;
-                                        for (int index = 0;
+                                        for (size_t index = 0;
                                              index < endOutputHorizontal - outputHorizontal;
-                                             index++) {
-                                            int actualOutputCoordinate =
+                                             ++index) {
+                                            const size_t actualOutputCoordinate =
                                                 batchStartIndex + y * outputRowStride +
                                                 (outputHorizontal + index) * outputColStride;
-                                            int actualOtherCoordinate =
+                                            const size_t actualOtherCoordinate =
                                                 otherCoordinate + xOther * otherRowStride +
                                                 (otherVertical + index) *
                                                     otherColStride; // inverted cuz transposed
@@ -349,9 +367,9 @@ private:
                                                 other->data[actualOtherCoordinate];
                                             accum += multipliedResult;
                                         }
-                                        int actualCurrCoordinate = currCoordinate +
-                                                                   y * currRowStride +
-                                                                   xOther * currColStride;
+                                        const size_t actualCurrCoordinate = currCoordinate +
+                                                                            y * currRowStride +
+                                                                            xOther * currColStride;
                                         currGradientVector[actualCurrCoordinate] +=
                                             static_cast<scalarType>(accum);
                                     }
@@ -364,35 +382,37 @@ private:
                 if (other->trackGradient) {
                     std::vector<otherScalarType>& otherGradientVector =
                         other->ensureGradient().getData();
-                    int mNew = otherShape[otherDim - 2];
-                    int nNew = otherShape[otherDim - 1];
-                    int kNew = curr->dataShape[curr->dim - 2]; // since we want the tranpose of curr
+                    const size_t mNew = otherShape[otherDim - 2];
+                    const size_t nNew = otherShape[otherDim - 1];
+                    const size_t kNew =
+                        curr->dataShape[curr->dim - 2]; // since we want the tranpose of curr
 
-                    for (int currVertical = 0; currVertical < mNew;
+                    for (size_t currVertical = 0; currVertical < mNew;
                          currVertical += TensorImpl::tileM) {
-                        for (int outputHorizontal = 0; outputHorizontal < nNew;
+                        for (size_t outputHorizontal = 0; outputHorizontal < nNew;
                              outputHorizontal += TensorImpl::tileN) {
-                            for (int k = 0; k < kNew; k += tileK) {
-                                int currHorizontal = k;
-                                int outputVertical = k;
-                                int endCurrHorizontal = std::min(k + tileK, kNew);
-                                int endCurrVertical =
+                            for (size_t k = 0; k < kNew; k += tileK) {
+                                const size_t currHorizontal = k;
+                                const size_t outputVertical = k;
+                                const size_t endCurrHorizontal = std::min(k + tileK, kNew);
+                                const size_t endCurrVertical =
                                     std::min(currVertical + TensorImpl::tileM, mNew);
-                                int endOutputHorizontal =
+                                const size_t endOutputHorizontal =
                                     std::min(outputHorizontal + TensorImpl::tileN, nNew);
 
-                                for (int y = currVertical; y < endCurrVertical; y++) {
-                                    for (int xCurr = outputHorizontal; xCurr < endOutputHorizontal;
-                                         xCurr++) {
+                                for (size_t y = currVertical; y < endCurrVertical; ++y) {
+                                    for (size_t xCurr = outputHorizontal;
+                                         xCurr < endOutputHorizontal;
+                                         ++xCurr) {
                                         resultType accum = 0;
-                                        for (int index = 0;
+                                        for (size_t index = 0;
                                              index < endCurrHorizontal - currHorizontal;
-                                             index++) {
-                                            int actualOutputCoordinate =
+                                             ++index) {
+                                            const size_t actualOutputCoordinate =
                                                 batchStartIndex +
                                                 (outputVertical + index) * outputRowStride +
                                                 xCurr * outputColStride;
-                                            int actualCurrCoordinate =
+                                            const size_t actualCurrCoordinate =
                                                 currCoordinate +
                                                 (currHorizontal + index) * currRowStride +
                                                 y * currColStride; // inverted cuz transposed
@@ -401,9 +421,9 @@ private:
                                                 curr->data[actualCurrCoordinate];
                                             accum += multipliedResult;
                                         }
-                                        int actualOtherCoordinate = otherCoordinate +
-                                                                    y * otherRowStride +
-                                                                    xCurr * otherColStride;
+                                        const size_t actualOtherCoordinate = otherCoordinate +
+                                                                             y * otherRowStride +
+                                                                             xCurr * otherColStride;
                                         otherGradientVector[actualOtherCoordinate] +=
                                             static_cast<otherScalarType>(accum);
                                     }
@@ -418,42 +438,75 @@ private:
         return output;
     }
 
+public:
+public:
     std::shared_ptr<TensorImpl<scalarType>> tanh() {
-        std::vector<scalarType> outputData(getNumTotalElements());
-        for (int i = 0; i < getNumTotalElements(); i++) {
-            outputData[i] = std::tanh(data[i]);
+        const size_t totalElements = getNumTotalElements();
+        std::vector<scalarType> outputData(totalElements);
+        std::vector<size_t> outputShape(dataShape);
+
+        for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+            size_t remaining = outputIndex;
+            size_t inputCoordinate = 0;
+
+            for (size_t reverseIndex = dim; reverseIndex > 0; --reverseIndex) {
+                const size_t dimension = reverseIndex - 1;
+                const size_t coordinate = remaining % dataShape[dimension];
+                remaining /= dataShape[dimension];
+                inputCoordinate += coordinate * stride[dimension];
+            }
+
+            outputData[outputIndex] = std::tanh(data[inputCoordinate]);
         }
-        std::vector<size_t> outputShape = this->dataShape;
+
         std::shared_ptr<TensorImpl<scalarType>> output = std::make_shared<TensorImpl<scalarType>>(
-            std::move(outputData), std::move(dataShape), true);
+            std::move(outputData), std::move(outputShape), trackGradient);
+
+        if (!trackGradient) {
+            return output;
+        }
 
         output->parents = {this->shared_from_this()};
 
         std::weak_ptr<TensorImpl<scalarType>> currWeak{this->shared_from_this()};
         std::weak_ptr<TensorImpl<scalarType>> outputWeak{output};
 
-        output->backward = [currWeak, outputWeak]() {
+        output->backward = [currWeak, outputWeak, totalElements]() {
             std::shared_ptr<TensorImpl<scalarType>> output = outputWeak.lock();
             std::shared_ptr<TensorImpl<scalarType>> curr = currWeak.lock();
-            if (!output || !curr) {
+            if (!output || !curr || !curr->trackGradient) {
                 return;
             }
-            std::vector<scalarType>& outputGradientVector = output->gradient->getData();
+
+            std::vector<scalarType>& outputGradientVector = output->ensureGradient().getData();
             std::vector<scalarType>& currentGradientVector = curr->ensureGradient().getData();
-            for (int i = 0; i < curr->getNumTotalElements(); i++) {
-                currentGradientVector[i] +=
-                    (1 - std::pow(output->data[i], 2)) * outputGradientVector[i];
+
+            for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+                size_t remaining = outputIndex;
+                size_t inputCoordinate = 0;
+
+                for (size_t reverseIndex = curr->dim; reverseIndex > 0; --reverseIndex) {
+                    const size_t dimension = reverseIndex - 1;
+                    const size_t coordinate = remaining % curr->dataShape[dimension];
+                    remaining /= curr->dataShape[dimension];
+                    inputCoordinate += coordinate * curr->stride[dimension];
+                }
+
+                const scalarType outputValue = output->data[outputIndex];
+                currentGradientVector[inputCoordinate] +=
+                    (scalarType{1} - outputValue * outputValue) * outputGradientVector[outputIndex];
             }
         };
+
         return output;
     }
 
-public:
     TensorImpl(std::vector<scalarType> inputVector,
                std::vector<size_t> inputDimShape,
                bool shouldTrackGradient)
         : TensorBaseImpl(std::move(inputDimShape)), data(std::move(inputVector)),
           trackGradient(shouldTrackGradient) {
+        numTotalElements = data.size();
         fillStride(dim - 1);
     }
     bool trackGradient = true;
@@ -501,6 +554,7 @@ public:
     TensorImpl(const inputType& data, bool shouldTrackGradient = true)
         : trackGradient(shouldTrackGradient) {
         findShapeAndFlatten(data, 0);
+        numTotalElements = this->data.size();
         stride.resize(dim);
         if (dim > 0) {
             fillStride(dim - 1);
@@ -518,7 +572,8 @@ public:
             std::make_shared<TensorImpl<scalarType>>(data, dataShape, trackGradient);
 
         // tranposing is equivalent to just switching the coordinates of every element in the matrix
-        // so to we just need to swap the stride    output->stride = stride;
+        // so to we just need to swap the stride
+        output->stride = stride;
         output->swapStride(dim1, dim2);
         output->swapShape(dim1, dim2);
 
@@ -556,26 +611,26 @@ public:
             throw std::runtime_error{"Cannot multiply by a null tensor"};
         }
 
-        int otherDim = static_cast<int>(other->getDim());
-        int currDim = static_cast<int>(dim);
+        const size_t otherDim = other->getDim();
+        const size_t currDim = dim;
 
         if (otherDim < 2 || currDim < 2) {
             throw std::runtime_error{"Ensure both tensors are at least 2d"};
         }
 
         std::vector<size_t> otherShape = other->getShape();
-        int mCurr = dataShape[currDim - 2];
-        int nCurr = dataShape[currDim - 1];
-        int mOther = otherShape[otherDim - 2];
-        int nOther = otherShape[otherDim - 1];
+        const size_t mCurr = dataShape[currDim - 2];
+        const size_t nCurr = dataShape[currDim - 1];
+        const size_t mOther = otherShape[otherDim - 2];
+        const size_t nOther = otherShape[otherDim - 1];
 
         if (mOther != nCurr) {
             throw std::runtime_error("Based on the shapes of the final two dimensions of each "
                                      "matrix, these two tensors cannot be multiplied");
         }
 
-        int batchDim;
-        int totalElements;
+        size_t batchDim;
+        size_t totalElements;
         std::vector<size_t> newShape;
         std::vector<size_t> effectiveStrideCurr;
         std::vector<size_t> effectiveStrideOther;
@@ -609,8 +664,8 @@ public:
             throw std::runtime_error{"Cannot add with a null tensor"};
         }
 
-        int batchDim;
-        int totalElements;
+        size_t batchDim;
+        size_t totalElements;
         std::vector<size_t> newShape;
         std::vector<size_t> effectiveStrideCurr;
         std::vector<size_t> effectiveStrideOther;
@@ -625,12 +680,13 @@ public:
         using resultType = std::common_type_t<scalarType, otherScalarType>;
 
         std::vector<resultType> result(totalElements);
-        for (int outputIndex = 0; outputIndex < totalElements; outputIndex++) {
-            int outputIndexCopy = outputIndex;
-            int currCoordinate = 0;
-            int otherCoordinate = 0;
-            for (int index = batchDim - 1; index >= 0; index--) {
-                int currDimStrideCoefficient = outputIndexCopy % newShape[index];
+        for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+            size_t outputIndexCopy = outputIndex;
+            size_t currCoordinate = 0;
+            size_t otherCoordinate = 0;
+            for (size_t reverseIndex = batchDim; reverseIndex > 0; --reverseIndex) {
+                const size_t index = reverseIndex - 1;
+                const size_t currDimStrideCoefficient = outputIndexCopy % newShape[index];
                 outputIndexCopy /= newShape[index];
                 currCoordinate += currDimStrideCoefficient * effectiveStrideCurr[index];
                 otherCoordinate += currDimStrideCoefficient * effectiveStrideOther[index];
@@ -668,12 +724,13 @@ public:
             std::vector<resultType>& outputGradientVector = output->ensureGradient().getData();
             const std::vector<size_t>& newShape = output->getShape();
 
-            for (int outputIndex = 0; outputIndex < totalElements; outputIndex++) {
-                int outputIndexCopy = outputIndex;
-                int currCoordinate = 0;
-                int otherCoordinate = 0;
-                for (int index = batchDim - 1; index >= 0; index--) {
-                    int currDimStrideCoefficient = outputIndexCopy % newShape[index];
+            for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+                size_t outputIndexCopy = outputIndex;
+                size_t currCoordinate = 0;
+                size_t otherCoordinate = 0;
+                for (size_t reverseIndex = batchDim; reverseIndex > 0; --reverseIndex) {
+                    const size_t index = reverseIndex - 1;
+                    const size_t currDimStrideCoefficient = outputIndexCopy % newShape[index];
                     outputIndexCopy /= newShape[index];
                     currCoordinate += currDimStrideCoefficient * effectiveStrideCurr[index];
                     otherCoordinate += currDimStrideCoefficient * effectiveStrideOther[index];
@@ -702,15 +759,16 @@ public:
     operator+(otherScalarType other) {
         using resultType = std::common_type_t<scalarType, otherScalarType>;
 
-        const int totalElements = static_cast<int>(data.size());
+        const size_t totalElements = data.size();
         std::vector<resultType> result(totalElements);
 
-        for (int outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
-            int remaining = outputIndex;
-            int currCoordinate = 0;
+        for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+            size_t remaining = outputIndex;
+            size_t currCoordinate = 0;
 
-            for (int index = static_cast<int>(dim) - 1; index >= 0; --index) {
-                int coordinate = remaining % dataShape[index];
+            for (size_t reverseIndex = dim; reverseIndex > 0; --reverseIndex) {
+                const size_t index = reverseIndex - 1;
+                const size_t coordinate = remaining % dataShape[index];
                 remaining /= dataShape[index];
                 currCoordinate += coordinate * stride[index];
             }
@@ -742,12 +800,13 @@ public:
             const std::vector<size_t>& currShape = curr->getShape();
             const std::vector<size_t>& currStride = curr->getStride();
 
-            for (int outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
-                int remaining = outputIndex;
-                int currCoordinate = 0;
+            for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+                size_t remaining = outputIndex;
+                size_t currCoordinate = 0;
 
-                for (int index = static_cast<int>(currShape.size()) - 1; index >= 0; --index) {
-                    int coordinate = remaining % currShape[index];
+                for (size_t reverseIndex = currShape.size(); reverseIndex > 0; --reverseIndex) {
+                    const size_t index = reverseIndex - 1;
+                    const size_t coordinate = remaining % currShape[index];
                     remaining /= currShape[index];
                     currCoordinate += coordinate * currStride[index];
                 }
@@ -766,16 +825,17 @@ public:
     operator*(otherScalarType other) {
         using resultType = std::common_type_t<scalarType, otherScalarType>;
 
-        const int totalElements = static_cast<int>(data.size());
+        const size_t totalElements = data.size();
         const resultType scalar = static_cast<resultType>(other);
         std::vector<resultType> result(totalElements);
 
-        for (int outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
-            int remaining = outputIndex;
-            int currCoordinate = 0;
+        for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+            size_t remaining = outputIndex;
+            size_t currCoordinate = 0;
 
-            for (int index = static_cast<int>(dim) - 1; index >= 0; --index) {
-                int coordinate = remaining % dataShape[index];
+            for (size_t reverseIndex = dim; reverseIndex > 0; --reverseIndex) {
+                const size_t index = reverseIndex - 1;
+                const size_t coordinate = remaining % dataShape[index];
                 remaining /= dataShape[index];
                 currCoordinate += coordinate * stride[index];
             }
@@ -806,12 +866,13 @@ public:
             const std::vector<size_t>& currShape = curr->getShape();
             const std::vector<size_t>& currStride = curr->getStride();
 
-            for (int outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
-                int remaining = outputIndex;
-                int currCoordinate = 0;
+            for (size_t outputIndex = 0; outputIndex < totalElements; ++outputIndex) {
+                size_t remaining = outputIndex;
+                size_t currCoordinate = 0;
 
-                for (int index = static_cast<int>(currShape.size()) - 1; index >= 0; --index) {
-                    int coordinate = remaining % currShape[index];
+                for (size_t reverseIndex = currShape.size(); reverseIndex > 0; --reverseIndex) {
+                    const size_t index = reverseIndex - 1;
+                    const size_t coordinate = remaining % currShape[index];
                     remaining /= currShape[index];
                     currCoordinate += coordinate * currStride[index];
                 }
@@ -822,5 +883,187 @@ public:
         };
 
         return output;
+    }
+
+    std::shared_ptr<TensorImpl<scalarType>> softmax() {
+        static_assert(std::is_floating_point_v<scalarType>,
+                      "Softmax requires a floating point tensor type");
+
+        if (dim == 0 || dataShape[dim - 1] == 0) {
+            throw std::runtime_error{"Softmax requires a non empty final dimension"};
+        }
+
+        std::vector<scalarType> outputData(getNumTotalElements());
+        std::vector<size_t> outputShape(dataShape);
+
+        const size_t numElementsPerBatch = dataShape[dim - 1];
+        const size_t totalBatches = getNumTotalElements() / numElementsPerBatch;
+        const size_t classStride = stride[dim - 1];
+
+        for (size_t batchIndex = 0; batchIndex < totalBatches; ++batchIndex) {
+            size_t remaining = batchIndex;
+            size_t inputBase = 0;
+
+            for (size_t reverseIndex = dim - 1; reverseIndex > 0; --reverseIndex) {
+                size_t dimension = reverseIndex - 1;
+                size_t coordinate = remaining % dataShape[dimension];
+                remaining /= dataShape[dimension];
+                inputBase += coordinate * stride[dimension];
+            }
+
+            size_t outputBase = batchIndex * numElementsPerBatch;
+            scalarType softmaxAccum = 0;
+            scalarType largestLogit = data[inputBase];
+
+            for (size_t index = 1; index < numElementsPerBatch; ++index) {
+                largestLogit = std::max(largestLogit, data[inputBase + index * classStride]);
+            }
+
+            for (size_t index = 0; index < numElementsPerBatch; ++index) {
+                softmaxAccum += std::exp(data[inputBase + index * classStride] - largestLogit);
+            }
+
+            for (size_t index = 0; index < numElementsPerBatch; ++index) {
+                outputData[outputBase + index] =
+                    std::exp(data[inputBase + index * classStride] - largestLogit) / softmaxAccum;
+            }
+        }
+
+        std::shared_ptr<TensorImpl<scalarType>> output = std::make_shared<TensorImpl<scalarType>>(
+            std::move(outputData), std::move(outputShape), trackGradient);
+
+        if (!trackGradient) {
+            return output;
+        }
+
+        std::shared_ptr<TensorImpl<scalarType>> curr = this->shared_from_this();
+        output->parents = {curr};
+        std::weak_ptr<TensorImpl<scalarType>> currWeak{curr};
+        std::weak_ptr<TensorImpl<scalarType>> outputWeak{output};
+
+        output->backward = [currWeak, outputWeak, numElementsPerBatch, totalBatches]() {
+            std::shared_ptr<TensorImpl<scalarType>> curr = currWeak.lock();
+            std::shared_ptr<TensorImpl<scalarType>> output = outputWeak.lock();
+
+            if (!curr || !output || !curr->trackGradient) {
+                return;
+            }
+
+            std::vector<scalarType>& currGradientVector = curr->ensureGradient().getData();
+            std::vector<scalarType>& outputGradientVector = output->ensureGradient().getData();
+            const size_t inputClassStride = curr->stride[curr->dim - 1];
+
+            for (size_t batchIndex = 0; batchIndex < totalBatches; ++batchIndex) {
+                size_t remaining = batchIndex;
+                size_t inputBase = 0;
+
+                for (size_t reverseIndex = curr->dim - 1; reverseIndex > 0; --reverseIndex) {
+                    const size_t dimension = reverseIndex - 1;
+                    const size_t coordinate = remaining % curr->dataShape[dimension];
+                    remaining /= curr->dataShape[dimension];
+                    inputBase += coordinate * curr->stride[dimension];
+                }
+
+                const size_t outputBase = batchIndex * numElementsPerBatch;
+                scalarType gradientDotOutput = 0;
+
+                for (size_t index = 0; index < numElementsPerBatch; ++index) {
+                    gradientDotOutput +=
+                        outputGradientVector[outputBase + index] * output->data[outputBase + index];
+                }
+
+                for (size_t index = 0; index < numElementsPerBatch; ++index) {
+                    currGradientVector[inputBase + index * inputClassStride] +=
+                        output->data[outputBase + index] *
+                        (outputGradientVector[outputBase + index] - gradientDotOutput);
+                }
+            }
+        };
+
+        return output;
+    }
+
+    void step(scalarType learningRate) {
+        if (!gradient) {
+            return;
+        }
+        std::vector<scalarType>& gradientData = gradient->getData();
+        for (size_t i = 0; i < getNumTotalElements(); ++i) {
+            data[i] -= gradientData[i] * learningRate;
+        }
+    }
+
+    void zeroGrad() {
+        if (!gradient) {
+            return;
+        }
+        std::vector<scalarType>& gradientData = gradient->getData();
+        std::fill(gradientData.begin(), gradientData.end(), scalarType{});
+    }
+
+    template <typename anyType>
+    std::shared_ptr<TensorImpl<scalarType>> NLLLoss(std::shared_ptr<TensorImpl<anyType>>& target) {
+
+        const size_t numElementsPerBatch = dataShape[dim - 1];
+        const size_t totalBatches = getNumTotalElements() / numElementsPerBatch;
+        std::vector<size_t> selectedIndices(totalBatches);
+        std::vector<scalarType> outputData(1);
+        std::vector<size_t> outputShape{1};
+
+        scalarType totalLoss = 0;
+        for (size_t batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
+            size_t targetClass = target->data[batchIndex];
+            size_t selectedIndex = batchIndex * numElementsPerBatch + targetClass;
+            selectedIndices[batchIndex] = selectedIndex;
+            scalarType probability =
+                std::max(data[selectedIndex], std::numeric_limits<scalarType>::min());
+            totalLoss += -std::log(probability);
+        }
+
+        outputData[0] = totalLoss / totalBatches;
+
+        std::shared_ptr<TensorImpl<scalarType>> output = std::make_shared<TensorImpl<scalarType>>(
+            std::move(outputData), std::move(outputShape), trackGradient);
+
+        std::shared_ptr<TensorImpl<scalarType>> curr = this->shared_from_this();
+        output->parents = {curr};
+
+        std::weak_ptr<TensorImpl<scalarType>> outputWeak{output};
+        std::weak_ptr<TensorImpl<scalarType>> currWeak{curr};
+
+        output->backward =
+            [outputWeak, currWeak, totalBatches, selectedIndices = std::move(selectedIndices)]() {
+                std::shared_ptr<TensorImpl<scalarType>> output = outputWeak.lock();
+                std::shared_ptr<TensorImpl<scalarType>> curr = currWeak.lock();
+
+                if (!output || !curr || !curr->trackGradient) {
+                    return;
+                }
+
+                std::vector<scalarType>& outputGradientVector = output->ensureGradient().getData();
+                std::vector<scalarType>& currGradientVector = curr->ensureGradient().getData();
+
+                for (size_t batchIndex = 0; batchIndex < selectedIndices.size(); batchIndex += 1) {
+                    size_t selectedIndex = selectedIndices[batchIndex];
+                    scalarType probability =
+                        std::max(curr->data[selectedIndex], std::numeric_limits<scalarType>::min());
+
+                    currGradientVector[selectedIndex] +=
+                        outputGradientVector[0] * (-1 / probability) / totalBatches;
+                }
+            };
+
+        return output;
+    }
+
+    void backwardPass() {
+        if (getNumTotalElements() != 1) {
+            throw std::runtime_error{"backward() requires a scalar tensor"};
+        }
+
+        std::vector<scalarType>& rootGradient = ensureGradient().getData();
+
+        rootGradient[0] = scalarType{1};
+        applyBackward();
     }
 };

@@ -1,7 +1,11 @@
-#include "TensorImpl.hpp"
-template <typename scalarType = float> class Tensor {
+#pragma once
+
+#include <TensorImpl.hpp>
+template <typename scalarType = float>
+class Tensor {
 private:
-    template <typename> friend class Tensor;
+    template <typename>
+    friend class Tensor;
 
     std::shared_ptr<TensorImpl<scalarType>> impl;
 
@@ -31,7 +35,7 @@ public:
         return impl->getStride();
     }
 
-    int getNumTotalElements() {
+    size_t getNumTotalElements() const noexcept {
         return impl->getNumTotalElements();
     }
 
@@ -73,5 +77,26 @@ public:
 
     Tensor<scalarType> tanh() {
         return Tensor<scalarType>(impl->tanh());
+    }
+
+    Tensor<scalarType> softmax() {
+        return Tensor<scalarType>(impl->softmax());
+    }
+
+    void step(scalarType learningRate) {
+        impl->step(learningRate);
+    }
+
+    void zeroGrad() {
+        impl->zeroGrad();
+    }
+
+    template <typename anyType>
+    Tensor<scalarType> NLLLoss(Tensor<anyType>& target) {
+        return Tensor<scalarType>(impl->NLLLoss(target.impl));
+    }
+
+    void backward() {
+        impl->backwardPass();
     }
 };
