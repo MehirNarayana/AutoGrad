@@ -31,7 +31,7 @@ class Sequential : public Layer<scalarType> {
             }
 
             return input;
-        }
+       }
 
         std::vector<Tensor<scalarType>> parameters() override {
             std::vector<Tensor<scalarType>> result;
