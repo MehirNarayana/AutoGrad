@@ -1,44 +1,66 @@
 #pragma once
-#include <Tensor.hpp>
 #include <Layers/Layer.hpp>
+#include <Tensor.hpp>
 #include <memory>
+#include <stdexcept>
 
-template <typename scalarType=float>
+template <typename scalarType = float>
 class Sequential : public Layer<scalarType> {
-    private:
-        std::vector<std::unique_ptr<Layer<scalarType>>> layers;
-    public:
-        template <typename layerType>
-        void add(layerType &&layer){
-            using decayedType = std::decay_t<layerType>;
+private:
+    std::vector<std::unique_ptr<Layer<scalarType>>> layers;
 
-            static_assert(
-                std::is_base_of_v<Layer<scalarType>, decayedType>,
-                "Every Sequential argument must be a layer"
-            );
+public:
+    Sequential() = default;
 
-            layers.push_back(std::make_unique<decayedType>(std::forward<layerType>(layer)));//move or copy depending on if layer is a lvalue or rvalue
+    void add(std::unique_ptr<Layer<scalarType>> layer) {
+        if (!layer) {
+            throw std::invalid_argument{"Cannot add an empty layer to Sequential"};
+        }
+        layers.push_back(std::move(layer));
+    }
+
+    template <typename layerType>
+    void add(layerType&& layer) {
+        using decayedType = std::decay_t<layerType>;
+
+        static_assert(std::is_base_of_v<Layer<scalarType>, decayedType>,
+                      "Every Sequential argument must be a layer");
+
+        std::unique_ptr<Layer<scalarType>> layerPointer =
+            std::make_unique<decayedType>(std::forward<layerType>(
+                layer)); // move or copy depending on if layer is a lvalue or rvalue
+
+        add(std::move(layerPointer));
+    }
+
+    template <typename... layerTypes>
+    explicit Sequential(layerTypes&&... inputLayers) {
+        (add(std::forward<layerTypes>(inputLayers)), ...);
+    }
+
+    Tensor<scalarType> forward(Tensor<scalarType> input) override {
+        for (std::unique_ptr<Layer<scalarType>>& layer : layers) {
+            input = layer->forward(std::move(input));
         }
 
-        template <typename ...layerTypes>
-        explicit Sequential(layerTypes&&... inputLayers) {
-            (add(std::forward<layerTypes>(inputLayers)), ...);
+        return input;
+    }
+
+    std::vector<Tensor<scalarType>> parameters() override {
+        std::vector<Tensor<scalarType>> result;
+        for (const std::unique_ptr<Layer<scalarType>>& layer : layers) {
+            std::vector<Tensor<scalarType>> layerParameters = layer->parameters();
+            result.insert(result.end(), layerParameters.begin(), layerParameters.end());
         }
+        return result;
+    }
 
-        Tensor<scalarType> forward(Tensor<scalarType> input) override{
-            for (std::unique_ptr<Layer<scalarType>> &layer : layers){
-                input = layer->forward(std::move(input));
-            }
-
-            return input;
-       }
-
-        std::vector<Tensor<scalarType>> parameters() override {
-            std::vector<Tensor<scalarType>> result;
-            for (const std::unique_ptr<Layer<scalarType>>& layer : layers) {
-                std::vector<Tensor<scalarType>> layerParameters = layer->parameters();
-                result.insert(result.end(), layerParameters.begin(), layerParameters.end());
-            }
-            return result;
+    void saveLayer(ModelWriter& writer) override {
+        writer.saveLayer(std::string{"Sequential"});
+        writer.writeNumber(static_cast<uint8_t>(dType<scalarType>()));
+        writer.writeNumber(layers.size());
+        for (const std::unique_ptr<Layer<scalarType>>& layer : layers) {
+            layer->saveLayer(writer);
         }
+    }
 };

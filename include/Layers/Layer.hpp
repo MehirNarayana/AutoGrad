@@ -1,7 +1,7 @@
 #pragma once
 
+#include <ModelWriter.hpp>
 #include <Tensor.hpp>
-
 #include <vector>
 
 template <typename scalarType = float>
@@ -12,4 +12,6 @@ public:
     virtual std::vector<Tensor<scalarType>> parameters() {
         return {};
     }
+
+    virtual void saveLayer(ModelWriter& writer) = 0;
 };

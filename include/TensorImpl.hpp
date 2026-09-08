@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ScalarType.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -55,6 +57,9 @@ public:
 template <typename scalarType = float>
 class TensorImpl : public TensorBaseImpl,
                    public std::enable_shared_from_this<TensorImpl<scalarType>> {
+    static_assert(isSupportedTensorScalarType<scalarType>,
+                  "TensorImpl scalar type is not supported");
+
 private:
     template <typename>
     friend class TensorImpl;
@@ -439,7 +444,6 @@ private:
     }
 
 public:
-public:
     std::shared_ptr<TensorImpl<scalarType>> tanh() {
         const size_t totalElements = getNumTotalElements();
         std::vector<scalarType> outputData(totalElements);
@@ -506,6 +510,12 @@ public:
                bool shouldTrackGradient)
         : TensorBaseImpl(std::move(inputDimShape)), data(std::move(inputVector)),
           trackGradient(shouldTrackGradient) {
+        if constexpr (!isSupportedAutogradScalarType<scalarType>) {
+            if (shouldTrackGradient) {
+                throw std::runtime_error{"Only floating-point tensors can track gradients"};
+            }
+        }
+
         numTotalElements = data.size();
         fillStride(dim - 1);
     }
@@ -553,6 +563,12 @@ public:
     template <typename inputType>
     TensorImpl(const inputType& data, bool shouldTrackGradient = true)
         : trackGradient(shouldTrackGradient) {
+        if constexpr (!isSupportedAutogradScalarType<scalarType>) {
+            if (shouldTrackGradient) {
+                throw std::runtime_error{"Only floating-point tensors can track gradients"};
+            }
+        }
+
         findShapeAndFlatten(data, 0);
         numTotalElements = this->data.size();
         stride.resize(dim);
@@ -885,8 +901,12 @@ public:
         return output;
     }
 
+    std::vector<scalarType> getDataCopy() {
+        return data;
+    }
+
     std::shared_ptr<TensorImpl<scalarType>> softmax() {
-        static_assert(std::is_floating_point_v<scalarType>,
+        static_assert(isSupportedFloatingPointScalarType<scalarType>,
                       "Softmax requires a floating point tensor type");
 
         if (dim == 0 || dataShape[dim - 1] == 0) {
@@ -1003,6 +1023,10 @@ public:
 
     template <typename anyType>
     std::shared_ptr<TensorImpl<scalarType>> NLLLoss(std::shared_ptr<TensorImpl<anyType>>& target) {
+        static_assert(isSupportedFloatingPointScalarType<scalarType>,
+                      "NLLLoss predictions require a supported floating-point scalar type");
+        static_assert(isSupportedIndexScalarType<anyType>,
+                      "NLLLoss targets require a supported integer scalar type");
 
         const size_t numElementsPerBatch = dataShape[dim - 1];
         const size_t totalBatches = getNumTotalElements() / numElementsPerBatch;

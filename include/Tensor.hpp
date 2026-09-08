@@ -1,8 +1,12 @@
 #pragma once
 
+#include <ScalarType.hpp>
 #include <TensorImpl.hpp>
+#include <vector>
 template <typename scalarType = float>
 class Tensor {
+    static_assert(isSupportedTensorScalarType<scalarType>, "Tensor scalar type is not supported");
+
 private:
     template <typename>
     friend class Tensor;
@@ -98,5 +102,9 @@ public:
 
     void backward() {
         impl->backwardPass();
+    }
+
+    std::vector<scalarType> getData() {
+        return impl->getDataCopy();
     }
 };
