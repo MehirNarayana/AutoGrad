@@ -1,5 +1,4 @@
 
 build/
 .vscode/
-.clang-format
-# so code doesn't look bad :)
+**/.DS_Store
