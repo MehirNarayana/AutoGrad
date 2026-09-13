@@ -31,7 +31,6 @@ and model persistence.
 - Stride-based transpose operations
 - NumPy-style broadcasting through effective zero strides
 - Broadcasted tensor addition
-- Mixed scalar-type operations using `std::common_type_t`
 - Scalar addition and multiplication
 - Tiled, batched matrix multiplication
 - Reverse-mode automatic differentiation
@@ -185,22 +184,12 @@ An alternative output path can be supplied:
 
 ### Extracting an MNIST image
 
-The included script converts one image from an IDX `ubyte` file into a 28x28 PGM image and prints
-its corresponding label:
-
-```bash
-python3 Examples/MNIST/extract_mnist.py \
-  Examples/MNIST/dataset/t10k-images-idx3-ubyte \
-  3 \
-  zero.pgm
-```
-
 ### Running inference
 
 ```bash
 ./build/Examples/MNIST/examples infer \
   Examples/MNIST/mnist.model \
-  zero.pgm
+  {path_to_pgm_image}
 ```
 
 Inference currently accepts 28x28 grayscale PGM images (`P5` or `P2`).
@@ -212,9 +201,6 @@ biases. `ModelReader::loadModel<T>()` reconstructs the layer tree with gradient 
 The files are intended for inference, not for resuming training: gradients, optimizer state, and the
 autograd graph are not stored.
 
-The current format is deliberately minimal and assumes a valid file produced on a compatible
-machine. It uses native byte order and native `size_t`, and it does not yet contain a magic header,
-format version, checksum, or cross-platform compatibility guarantees.
 
 ## Formatting
 
